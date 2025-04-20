@@ -198,3 +198,5 @@ Your support helps keep this project maintained and improved with new features!
 
 > [!NOTE]  
 > I am not affiliated with Easynews in any way. This project is a fan-made addon that provides access to Easynews content. You need an active Easynews subscription to use this addon.
+>
+> a
