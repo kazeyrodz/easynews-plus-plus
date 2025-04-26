@@ -1,6 +1,6 @@
 {
-  "name": "@easynews-plus-plus/addon",
-  "version": "1.3.4",
+  "name": "easynews-plus-plus-addon",
+  "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
     "test": "vitest run --passWithNoTests",
@@ -8,14 +8,14 @@
     "build": "tsc",
     "prepublish": "npm run build",
     "start": "node dist/server.js",
-    "start:dev": "cross-env NODE_ENV=dev tsx watch src/server.ts"
+    "start:dev": "tsx watch src/server.ts"
   },
-  "description": "This addon provides content from Easynews & includes a search catalog. It uses a different auth implementation than other Easynews addons to function as expected on multiple plattforms and has some additional enhancements. Self-Host Guide & more infos: https://github.com/panteLx/easynews-plus-plus-addon",
+  "description": "Addon package for Easynews++",
   "devDependencies": {
     "@types/stremio-addon-sdk": "^1.6.11"
   },
   "dependencies": {
-    "@easynews-plus-plus/api": "^1.1.0",
+    "easynews-plus-plus-api": "file:../api",
     "parse-torrent-title": "^1.4.0",
     "stremio-addon-sdk": "^1.6.10"
   }

@@ -1,10 +1,8 @@
 import { Cache, ContentType, MetaDetail, MetaVideo } from 'stremio-addon-sdk';
 import addonBuilder from 'stremio-addon-sdk/src/builder';
-import landingTemplate from 'stremio-addon-sdk/src/landingTemplate';
 import { catalog, manifest } from './manifest';
 import {
   buildSearchQuery,
-  capitalizeFirstLetter,
   createStreamPath,
   createStreamUrl,
   createThumbnailUrl,
@@ -15,43 +13,27 @@ import {
   getSize,
   getVersion,
   isBadVideo,
-  loadCustomTitles,
   logger,
-  LogLevel,
   logError,
   matchesTitle,
-  parseCustomTitles,
   getAlternativeTitles,
 } from './utils';
-import {
-  EasynewsAPI,
-  SearchOptions,
-  EasynewsSearchResponse,
-} from '@easynews-plus-plus/api';
+import { EasynewsAPI, SearchOptions, EasynewsSearchResponse } from 'easynews-plus-plus-api';
 import { publicMetaProvider } from './meta';
-import {
-  fromHumanReadable,
-  toDirection,
-  SortOption,
-  SortOptionKey,
-} from './sort-option';
 import { Stream } from './types';
-import * as path from 'path';
-import * as fs from 'fs';
+import customTitlesJson from '../../../custom-titles.json';
 
 // Extended configuration interface
 interface AddonConfig {
   username: string;
   password: string;
-  customTitles?: string;
   strictTitleMatching?: string;
-  sort1?: string;
-  sort1Direction?: string;
-  sort2?: string;
-  sort2Direction?: string;
-  sort3?: string;
-  sort3Direction?: string;
+  preferredLanguage?: string;
+  sortingPreference?: string;
   logLevel?: string; // Add log level configuration option
+  showQualities?: string; // Comma-separated list of qualities to show
+  maxResultsPerQuality?: string; // Max results per quality
+  maxFileSize?: string; // Max file size in GB
   [key: string]: any;
 }
 
@@ -62,9 +44,7 @@ const builder = new addonBuilder(manifest);
 const prefix = `${catalog.id}:`;
 
 // Log addon initialization
-logger.info(
-  `Addon initializing - version: ${getVersion()}, log level: ${logger.getLevelName()}`
-);
+logger.info(`Addon initializing - version: ${getVersion()}, log level: ${logger.getLevelName()}`);
 
 // In-memory request cache to reduce API calls and improve response times
 const requestCache = new Map<string, { data: any; timestamp: number }>();
@@ -87,81 +67,42 @@ function setCache<T>(key: string, data: T): void {
   requestCache.set(key, { data, timestamp: Date.now() });
 }
 
-// Load custom titles from file if available
-// Try multiple possible locations for the file
-let translationsFromFile: Record<string, string[]> = {};
-let loadedPath: string | null = null;
-
-// Start with the built-in translations by calling loadCustomTitles with a non-existent path
-// This will return the default built-in translations
-translationsFromFile = loadCustomTitles('');
+// Load custom titles
+let titlesFromFile: Record<string, string[]> = {};
+let loadedPath = '';
 
 try {
-  const possiblePaths = [
-    // In the same directory as the running code
-    path.join(__dirname, 'custom-titles.json'),
-    // One level up (addon root directory)
-    path.join(__dirname, '..', 'custom-titles.json'),
-    // Two levels up (packages directory)
-    path.join(__dirname, '..', '..', 'custom-titles.json'),
-    // Three levels up (project root)
-    path.join(__dirname, '..', '..', '..', 'custom-titles.json'),
-    // In current working directory
-    path.join(process.cwd(), 'custom-titles.json'),
-    // In addon subdirectory of current working directory
-    path.join(process.cwd(), 'addon', 'custom-titles.json'),
-    // In dist subdirectory of current working directory
-    path.join(process.cwd(), 'dist', 'custom-titles.json'),
-  ];
+  // Always use the imported JSON by default
+  logger.info('Loading custom titles from imported custom-titles.json');
+  titlesFromFile = customTitlesJson;
+  loadedPath = 'imported';
 
-  // Try each path until we find the file
-  for (const filePath of possiblePaths) {
-    try {
-      if (fs.existsSync(filePath)) {
-        logger.info(`Found custom-titles.json at: ${filePath}`);
-        translationsFromFile = loadCustomTitles(filePath);
-        loadedPath = filePath;
+  // Log some details about the loaded custom titles
+  const numCustomTitles = Object.keys(titlesFromFile).length;
+  logger.info(`Successfully loaded ${numCustomTitles} custom titles`);
 
-        // Log some details about the loaded custom titles
-        const numTranslations = Object.keys(translationsFromFile).length;
-        logger.info(`Successfully loaded ${numTranslations} custom titles`);
-
-        if (numTranslations > 0) {
-          // Log a few examples to verify they're loaded correctly
-          const examples = Object.entries(translationsFromFile).slice(0, 3);
-          for (const [original, translations] of examples) {
-            logger.info(
-              `Example custom title: "${original}" -> "${translations.join('", "')}"`
-            );
-          }
-        } else {
-          logger.info(
-            'No custom titles were loaded from the file. The file might be empty or have invalid format.'
-          );
-        }
-        break;
-      }
-    } catch (error) {
-      logger.info(`Error checking path ${filePath}: ${error}`);
-    }
-  }
-
-  if (!loadedPath) {
-    logger.info(
-      `Could not find custom-titles.json file. Using built-in custom titles only. Built-in custom titles count: ${Object.keys(translationsFromFile).length}`
-    );
-    logger.info('Some examples of built-in custom titles:');
-    const examples = Object.entries(translationsFromFile).slice(0, 5);
-    for (const [original, translations] of examples) {
-      logger.info(`  "${original}" -> "${translations.join('", "')}"`);
+  if (numCustomTitles > 0) {
+    // Log a few examples to verify they're loaded correctly
+    const examples = Object.entries(titlesFromFile).slice(0, 3);
+    for (const [original, customTitles] of examples) {
+      logger.info(`Example custom title: "${original}" -> "${customTitles.join('", "')}"`);
     }
   } else {
-    logger.info(`Using custom titles from: ${loadedPath}`);
+    logger.info(
+      'No custom titles were loaded from the file. The file might be empty or have invalid format.'
+    );
   }
 } catch (error) {
   logger.error('Error loading custom titles file:', error);
-  logger.info('Using built-in custom titles as fallback');
+  logger.info('Using imported custom titles as fallback');
+  titlesFromFile = customTitlesJson;
 }
+
+// Import custom template for landing page
+import customTemplate from './custom-template';
+
+// Export landing HTML for Cloudflare Worker
+export const landingHTML = customTemplate(manifest);
 
 builder.defineCatalogHandler(async ({ extra: { search } }) => {
   return {
@@ -182,16 +123,11 @@ builder.defineCatalogHandler(async ({ extra: { search } }) => {
 });
 
 builder.defineMetaHandler(
-  async ({
-    id,
-    type,
-    config,
-  }: {
-    id: string;
-    type: ContentType;
-    config: AddonConfig;
-  }) => {
+  async ({ id, type, config }: { id: string; type: ContentType; config: AddonConfig }) => {
     const { username, password, logLevel } = config;
+
+    // For language filtering in the catalog
+    const preferredLang = config.preferredLanguage || '';
 
     // Configure logger based on config
     if (logLevel) {
@@ -254,6 +190,8 @@ builder.defineMetaHandler(
               size: getSize(file),
               url: `${createStreamUrl(res, username, password)}/${createStreamPath(file)}`,
               videoSize: file.rawSize,
+              file,
+              preferredLang: '',
             }),
           ],
         });
@@ -290,21 +228,17 @@ builder.defineMetaHandler(
 );
 
 builder.defineStreamHandler(
-  async ({
-    id,
-    type,
-    config,
-  }: {
-    id: string;
-    type: ContentType;
-    config: AddonConfig;
-  }) => {
+  async ({ id, type, config }: { id: string; type: ContentType; config: AddonConfig }) => {
     const {
       username,
       password,
-      customTitles,
       strictTitleMatching,
+      preferredLanguage,
+      sortingPreference,
       logLevel,
+      showQualities,
+      maxResultsPerQuality,
+      maxFileSize,
       ...options
     } = config;
 
@@ -319,9 +253,12 @@ builder.defineStreamHandler(
       };
     }
 
-    // Include strictTitleMatching setting in cache key to ensure
+    // Include settings in cache key to ensure
     // users with different settings get different cache results
-    const cacheKey = `${id}:strict=${strictTitleMatching === 'on' || strictTitleMatching === 'true'}`;
+    const cacheKey = `${id}:v3:user=${username}:strict=${strictTitleMatching === 'on' || strictTitleMatching === 'true'}:lang=${preferredLanguage || ''}:sort=${sortingPreference}:qualities=${showQualities || ''}:maxPerQuality=${maxResultsPerQuality || ''}:maxSize=${maxFileSize || ''}`;
+
+    // const cacheKey = `${id}:v3:strict=${strictTitleMatching === 'on' || strictTitleMatching === 'true'}:lang=${preferredLanguage || ''}:sort=${sortingPreference}:qualities=${showQualities || ''}:maxPerQuality=${maxResultsPerQuality || ''}:maxSize=${maxFileSize || ''}`;
+    logger.info(`Cache key: ${cacheKey}`);
     const cached = getFromCache<{ streams: Stream[] }>(cacheKey);
 
     if (cached) {
@@ -334,72 +271,119 @@ builder.defineStreamHandler(
       }
 
       // Parse strictTitleMatching option (checkbox returns string 'on' or undefined)
-      const useStrictMatching =
-        strictTitleMatching === 'on' || strictTitleMatching === 'true';
-      logger.info(
-        `Strict title matching: ${useStrictMatching ? 'enabled' : 'disabled'}`
-      );
+      const useStrictMatching = strictTitleMatching === 'on' || strictTitleMatching === 'true';
+      logger.info(`Strict title matching: ${useStrictMatching ? 'enabled' : 'disabled'}`);
 
-      // Combine config-provided custom titles with titles from file
-      let customTranslations = { ...translationsFromFile };
+      // Get preferred language from configuration
+      const preferredLang = preferredLanguage || '';
+      logger.info(`Preferred language: ${preferredLang ? preferredLang : 'No preference'}`);
 
-      logger.info(
-        `Using ${Object.keys(customTranslations).length} custom titles (${Object.keys(translationsFromFile).length} from built-in/file + additional from config)`
-      );
+      // Parse quality filters
+      // const qualityFilters = showQualities
+      //   ? showQualities.split(',').map(q => q.trim())
+      //   : ['4k', '1080p', '720p', '480p'];
 
-      // Add any custom titles from configuration
-      if (customTitles) {
-        logger.info(`Additional custom titles provided in configuration`);
-        const customTitlesObj = parseCustomTitles(customTitles);
-        const customCount = Object.keys(customTitlesObj).length;
-        logger.info(`Parsed ${customCount} custom titles from configuration`);
+      const qualityFilters = showQualities
+        ? showQualities
+            .split(',')
+            .map(q => q.trim().toLowerCase())
+            .filter(Boolean)
+        : ['4k', '1080p', '720p', '480p'];
 
-        if (customCount > 0) {
-          // Merge translations, custom titles take precedence
-          customTranslations = {
-            ...translationsFromFile,
-            ...customTitlesObj,
-          };
-          logger.info(
-            `Combined custom titles count: ${Object.keys(customTranslations).length}`
-          );
-        }
+      logger.info(`Quality filters: ${qualityFilters.join(', ')}`);
+
+      // Parse max results per quality (0 = no limit)
+      // const maxResultsPerQualityValue = parseInt(maxResultsPerQuality || '0');
+      let maxResultsPerQualityValue = parseInt(maxResultsPerQuality ?? '0', 10);
+      if (Number.isNaN(maxResultsPerQualityValue) || maxResultsPerQualityValue < 0) {
+        maxResultsPerQualityValue = 0;
       }
+      logger.info(
+        `Max results per quality: ${maxResultsPerQualityValue === 0 ? 'No limit' : maxResultsPerQualityValue}`
+      );
 
-      // sort options
+      // Parse max file size (0 = no limit)
+      // const maxFileSizeGB = parseFloat(maxFileSize || '0');
+      let maxFileSizeGB = parseFloat(maxFileSize ?? '0');
+      if (Number.isNaN(maxFileSizeGB) || maxFileSizeGB < 0) {
+        maxFileSizeGB = 0;
+      }
+      logger.info(`Max file size: ${maxFileSizeGB === 0 ? 'No limit' : maxFileSizeGB + ' GB'}`);
+
+      // Use custom titles from custom-titles.json
+      const customTitles = { ...titlesFromFile };
+
+      logger.info(
+        `Using ${Object.keys(customTitles).length} custom titles from custom-titles.json`
+      );
+
+      // For troubleshooting:
+      logger.info(`Sorting preference from config: ${sortingPreference}`);
+
+      // Configure API sorting options based on user sorting preference
       const sortOptions: Partial<SearchOptions> = {
         query: '', // Will be set for each search later
       };
 
-      // Process sort options
-      const sort1 = options.sort1 as string | undefined;
-      if (sort1) {
-        const sortValue = fromHumanReadable(sort1);
-        if (sortValue) {
-          sortOptions.sort1 = sortValue;
-        }
+      // Automatically set API sorting parameters based on sorting preference
+      switch (sortingPreference) {
+        case 'size_first':
+          sortOptions.sort1 = 'dsize'; // Size
+          sortOptions.sort1Direction = '-'; // Descending
+          sortOptions.sort2 = 'relevance';
+          sortOptions.sort2Direction = '-';
+          break;
+        case 'date_first':
+          sortOptions.sort1 = 'dtime'; // DateTime
+          sortOptions.sort1Direction = '-'; // Descending
+          sortOptions.sort2 = 'dsize';
+          sortOptions.sort2Direction = '-';
+          break;
+        case 'relevance_first':
+          sortOptions.sort1 = 'relevance'; // Relevance
+          sortOptions.sort1Direction = '-'; // Descending
+          sortOptions.sort2 = 'dsize';
+          sortOptions.sort2Direction = '-';
+          break;
+        case 'language_first':
+          // For language prioritization, relevance usually works best with the API
+          sortOptions.sort1 = 'relevance';
+          sortOptions.sort1Direction = '-';
+          sortOptions.sort2 = 'dsize';
+          sortOptions.sort2Direction = '-';
+          break;
+        case 'quality_first':
+        default:
+          // For quality prioritization, size is a good proxy for quality
+          sortOptions.sort1 = 'dsize'; // Size
+          sortOptions.sort1Direction = '-'; // Descending
+          sortOptions.sort2 = 'relevance';
+          sortOptions.sort2Direction = '-';
+          break;
       }
 
-      const sort1Direction = options.sort1Direction as string | undefined;
-      if (sort1Direction) {
-        sortOptions.sort1Direction = toDirection(sort1Direction);
-      }
+      // Set a reasonable third sort option for all cases
+      sortOptions.sort3 = 'dtime'; // DateTime
+      sortOptions.sort3Direction = '-'; // Descending
+
+      // Log the API sorting parameters
+      logger.info(
+        `API Sorting: ${sortOptions.sort1} (${sortOptions.sort1Direction}), ${sortOptions.sort2} (${sortOptions.sort2Direction}), ${sortOptions.sort3} (${sortOptions.sort3Direction})`
+      );
 
       const meta = await publicMetaProvider(id, type);
       logger.info(`Searching for: ${meta.name}`);
 
-      // Check if we have a translation for this title directly
-      if (customTranslations[meta.name]) {
+      // Check if we have a custom title for this title directly
+      if (customTitles[meta.name]) {
         logger.info(
-          `Direct custom title found for "${meta.name}": "${customTranslations[meta.name].join('", "')}"`
+          `Direct custom title found for "${meta.name}": "${customTitles[meta.name].join('", "')}"`
         );
       } else {
-        logger.info(
-          `No direct custom title found for "${meta.name}", checking partial matches`
-        );
+        logger.info(`No direct custom title found for "${meta.name}", checking partial matches`);
 
         // Look for partial matches in title keys
-        for (const [key, values] of Object.entries(customTranslations)) {
+        for (const [key, values] of Object.entries(customTitles)) {
           if (
             meta.name.toLowerCase().includes(key.toLowerCase()) ||
             key.toLowerCase().includes(meta.name.toLowerCase())
@@ -413,54 +397,38 @@ builder.defineStreamHandler(
 
       const api = new EasynewsAPI({ username, password });
 
-      // Use alternativeNames from metadata if available, or generate them
-      // Convert translations to JSON string for getAlternativeTitles
-      const titlesJson = JSON.stringify(customTranslations);
-
       logger.info(`Getting alternative titles for: ${meta.name}`);
 
       // Initialize with the original title
       let allTitles = [meta.name];
 
-      // Add any direct translations found in customTranslations
-      if (
-        customTranslations[meta.name] &&
-        customTranslations[meta.name].length > 0
-      ) {
+      // Add any direct custom titles found in customTitles
+      if (customTitles[meta.name] && customTitles[meta.name].length > 0) {
         logger.info(
-          `Adding direct custom titles for "${meta.name}": "${customTranslations[meta.name].join('", "')}"`
+          `Adding direct custom titles for "${meta.name}": "${customTitles[meta.name].join('", "')}"`
         );
-        allTitles = [...allTitles, ...customTranslations[meta.name]];
+        allTitles = [...allTitles, ...customTitles[meta.name]];
       }
 
       // Add any alternative names from meta (if available)
       if (meta.alternativeNames && meta.alternativeNames.length > 0) {
-        logger.info(
-          `Adding ${meta.alternativeNames.length} alternative names from metadata`
-        );
+        logger.info(`Adding ${meta.alternativeNames.length} alternative names from metadata`);
         // Filter out duplicates
-        const newAlternatives = meta.alternativeNames.filter(
-          (alt) => !allTitles.includes(alt)
-        );
+        const newAlternatives = meta.alternativeNames.filter(alt => !allTitles.includes(alt));
         allTitles = [...allTitles, ...newAlternatives];
       }
 
       // Use getAlternativeTitles to find additional matches (like partial matches)
-      const additionalTitles = getAlternativeTitles(
-        meta.name,
-        titlesJson
-      ).filter((alt) => !allTitles.includes(alt) && alt !== meta.name);
+      const additionalTitles = getAlternativeTitles(meta.name, customTitles).filter(
+        alt => !allTitles.includes(alt) && alt !== meta.name
+      );
 
       if (additionalTitles.length > 0) {
-        logger.info(
-          `Adding ${additionalTitles.length} additional titles from partial matches`
-        );
+        logger.info(`Adding ${additionalTitles.length} additional titles from partial matches`);
         allTitles = [...allTitles, ...additionalTitles];
       }
 
-      logger.info(
-        `Will search for ${allTitles.length} titles: ${allTitles.join(', ')}`
-      );
+      logger.info(`Will search for ${allTitles.length} titles: ${allTitles.join(', ')}`);
 
       // Store all search results here
       const allSearchResults: {
@@ -494,9 +462,7 @@ builder.defineStreamHandler(
             const examples = res.data.slice(0, 2);
             for (const file of examples) {
               const title = getPostTitle(file);
-              logger.info(
-                `Example result: "${title}" (${file['4'] || 'unknown size'})`
-              );
+              logger.info(`Example result: "${title}" (${file['4'] || 'unknown size'})`);
             }
           }
         } catch (error) {
@@ -507,9 +473,7 @@ builder.defineStreamHandler(
 
       // If we get no or few results, try with year included for more specificity
       if (allSearchResults.length === 0 && meta.year !== undefined) {
-        logger.info(
-          `No results found without year, trying with year: ${meta.year}`
-        );
+        logger.info(`No results found without year, trying with year: ${meta.year}`);
 
         for (const titleVariant of allTitles) {
           // Skip empty titles
@@ -536,9 +500,7 @@ builder.defineStreamHandler(
               const examples = res.data.slice(0, 2);
               for (const file of examples) {
                 const title = getPostTitle(file);
-                logger.info(
-                  `Example result: "${title}" (${file['4'] || 'unknown size'})`
-                );
+                logger.info(`Example result: "${title}" (${file['4'] || 'unknown size'})`);
               }
             }
           } catch (error) {
@@ -552,10 +514,12 @@ builder.defineStreamHandler(
         return { streams: [] };
       }
 
-      const streams: Stream[] = [];
-      const processedHashes = new Set<string>(); // To avoid duplicate files
+      const processedHashes = new Set<string>();
 
-      // Process all search results
+      // Store all streams here
+      let streams: Stream[] = [];
+
+      // Process each search result
       for (const { query, result: res } of allSearchResults) {
         for (const file of res.data ?? []) {
           const title = getPostTitle(file);
@@ -591,26 +555,20 @@ builder.defineStreamHandler(
             }
 
             // Use strictTitleMatching setting if enabled for series
-            if (
-              !queries.some((q) => matchesTitle(title, q, useStrictMatching))
-            ) {
+            if (!queries.some(q => matchesTitle(title, q, useStrictMatching))) {
               continue;
             }
           }
 
           // For movies, check if title matches any of the query variants
           // Other content types are loosely matched
-          const matchesAnyVariant = allTitles.some((titleVariant) => {
+          const matchesAnyVariant = allTitles.some(titleVariant => {
             const variantQuery = buildSearchQuery(type, {
               ...meta,
               name: titleVariant,
             });
             // For movies, always use strictTitleMatching if enabled, otherwise default to movie behavior
-            return matchesTitle(
-              title,
-              variantQuery,
-              type === 'movie' || useStrictMatching
-            );
+            return matchesTitle(title, variantQuery, type === 'movie' || useStrictMatching);
           });
 
           if (!matchesAnyVariant) {
@@ -628,69 +586,342 @@ builder.defineStreamHandler(
               title,
               url: `${createStreamUrl(res, username, password)}/${createStreamPath(file)}`,
               videoSize: file.rawSize,
+              file,
+              preferredLang,
             })
           );
         }
       }
 
-      // Sort streams - prioritize higher quality videos
-      streams.sort((a, b) => {
-        // Extract description lines which contain size information
-        const aDesc = a.description?.split('\n') || [];
-        const bDesc = b.description?.split('\n') || [];
+      // Sort streams based on user preference
+      if (sortingPreference === 'language_first' && preferredLang) {
+        logger.info(`Applying language-first sorting for language: ${preferredLang}`);
 
-        // Extract quality from name
-        const aQuality = a.name?.includes('\n') ? a.name.split('\n')[1] : '';
-        const bQuality = b.name?.includes('\n') ? b.name.split('\n')[1] : '';
+        // Special handling for language-first sorting
+        // First, separate streams by language
+        const preferredLangStreams: Stream[] = [];
+        const otherStreams: Stream[] = [];
 
-        // Get quality scores (higher = better quality)
-        const getQualityScore = (quality: string): number => {
-          if (
-            quality?.includes('4K') ||
-            quality?.includes('2160p') ||
-            quality?.includes('UHD')
-          )
-            return 4;
-          if (quality?.includes('1080p')) return 3;
-          if (quality?.includes('720p')) return 2;
-          if (quality?.includes('480p')) return 1;
-          return 0; // unknown quality
+        // Split streams into two groups
+        for (const stream of streams) {
+          const file = (stream as any)._temp?.file;
+          const hasPreferredLang =
+            file?.alangs && Array.isArray(file.alangs) && file.alangs.includes(preferredLang);
+
+          if (hasPreferredLang) {
+            preferredLangStreams.push(stream);
+          } else {
+            otherStreams.push(stream);
+          }
+        }
+
+        logger.info(
+          `Found ${preferredLangStreams.length} streams with preferred language and ${otherStreams.length} other streams`
+        );
+
+        // Sort each group by quality and size
+        const sortByQualityAndSize = (a: Stream, b: Stream) => {
+          // Extract quality info
+          const aDesc = a.description?.split('\n') || [];
+          const bDesc = b.description?.split('\n') || [];
+          const aQuality = a.name?.includes('\n') ? a.name.split('\n')[1] : '';
+          const bQuality = b.name?.includes('\n') ? b.name.split('\n')[1] : '';
+
+          // Get quality scores
+          const getQualityScore = (quality: string): number => {
+            if (quality?.includes('4K') || quality?.includes('2160p') || quality?.includes('UHD'))
+              return 4;
+            if (quality?.includes('1080p')) return 3;
+            if (quality?.includes('720p')) return 2;
+            if (quality?.includes('480p')) return 1;
+            return 0;
+          };
+          const aScore = getQualityScore(aQuality);
+          const bScore = getQualityScore(bQuality);
+
+          // Compare quality scores
+          if (aScore !== bScore) {
+            return bScore - aScore;
+          }
+
+          // Compare sizes
+          const aSize = aDesc.length > 2 ? aDesc[2] : '';
+          const bSize = bDesc.length > 2 ? bDesc[2] : '';
+
+          if (aSize.includes('GB') && bSize.includes('GB')) {
+            const aGB = parseFloat(aSize.match(/[\d.]+/)?.[0] || '0');
+            const bGB = parseFloat(bSize.match(/[\d.]+/)?.[0] || '0');
+            if (aGB > bGB) return -1;
+            if (aGB < bGB) return 1;
+          }
+
+          if (aSize.includes('GB') && bSize.includes('MB')) return -1;
+          if (aSize.includes('MB') && bSize.includes('GB')) return 1;
+
+          if (aSize.includes('MB') && bSize.includes('MB')) {
+            const aMB = parseFloat(aSize.match(/[\d.]+/)?.[0] || '0');
+            const bMB = parseFloat(bSize.match(/[\d.]+/)?.[0] || '0');
+            if (aMB > bMB) return -1;
+            if (aMB < bMB) return 1;
+          }
+
+          return 0;
         };
 
-        const aScore = getQualityScore(aQuality);
-        const bScore = getQualityScore(bQuality);
+        // Sort each group independently
+        preferredLangStreams.sort(sortByQualityAndSize);
+        otherStreams.sort(sortByQualityAndSize);
 
-        // Higher score should come first
-        if (aScore !== bScore) {
-          return bScore - aScore; // Reverse order so higher score comes first
+        // Replace streams array with the concatenated sorted groups
+        streams.length = 0;
+        streams.push(...preferredLangStreams, ...otherStreams);
+      } else {
+        // Original sorting for other preferences
+        streams.sort((a, b) => {
+          // Extract stream data
+          const aFile = (a as any)._temp?.file;
+          const bFile = (b as any)._temp?.file;
+          const aHasPreferredLang = preferredLang && aFile?.alangs?.includes(preferredLang);
+          const bHasPreferredLang = preferredLang && bFile?.alangs?.includes(preferredLang);
+
+          // Extract quality info
+          const aDesc = a.description?.split('\n') || [];
+          const bDesc = b.description?.split('\n') || [];
+          const aQuality = a.name?.includes('\n') ? a.name.split('\n')[1] : '';
+          const bQuality = b.name?.includes('\n') ? b.name.split('\n')[1] : '';
+
+          // Get quality scores
+          const getQualityScore = (quality: string): number => {
+            if (quality?.includes('4K') || quality?.includes('2160p') || quality?.includes('UHD'))
+              return 4;
+            if (quality?.includes('1080p')) return 3;
+            if (quality?.includes('720p')) return 2;
+            if (quality?.includes('480p')) return 1;
+            return 0;
+          };
+          const aScore = getQualityScore(aQuality);
+          const bScore = getQualityScore(bQuality);
+
+          // Size comparison logic
+          const compareSize = () => {
+            const aSize = aDesc.length > 2 ? aDesc[2] : '';
+            const bSize = bDesc.length > 2 ? bDesc[2] : '';
+
+            if (aSize.includes('GB') && bSize.includes('GB')) {
+              const aGB = parseFloat(aSize.match(/[\d.]+/)?.[0] || '0');
+              const bGB = parseFloat(bSize.match(/[\d.]+/)?.[0] || '0');
+              if (aGB > bGB) return -1;
+              if (aGB < bGB) return 1;
+            }
+
+            if (aSize.includes('GB') && bSize.includes('MB')) return -1;
+            if (aSize.includes('MB') && bSize.includes('GB')) return 1;
+
+            if (aSize.includes('MB') && bSize.includes('MB')) {
+              const aMB = parseFloat(aSize.match(/[\d.]+/)?.[0] || '0');
+              const bMB = parseFloat(bSize.match(/[\d.]+/)?.[0] || '0');
+              if (aMB > bMB) return -1;
+              if (aMB < bMB) return 1;
+            }
+
+            return 0;
+          };
+
+          // Apply sorting based on user preference
+          switch (sortingPreference) {
+            case 'size_first':
+              // Size first, then quality, then language
+              const sizeCompare = compareSize();
+              if (sizeCompare !== 0) {
+                return sizeCompare;
+              }
+              if (aScore !== bScore) {
+                return bScore - aScore;
+              }
+              if (aHasPreferredLang !== bHasPreferredLang) {
+                return aHasPreferredLang ? -1 : 1;
+              }
+              return 0;
+
+            case 'date_first':
+              // We don't sort heavily by date locally - the API already did that
+              // Just do minimal local sorting for quality/language
+              if (aScore !== bScore) {
+                return bScore - aScore;
+              }
+              if (aHasPreferredLang !== bHasPreferredLang) {
+                return aHasPreferredLang ? -1 : 1;
+              }
+              return 0;
+
+            case 'relevance_first':
+              // For relevance, we primarily rely on the API sorting
+              // Just minimal quality and language adjustments
+              if (aScore !== bScore) {
+                return bScore - aScore;
+              }
+              if (aHasPreferredLang !== bHasPreferredLang) {
+                return aHasPreferredLang ? -1 : 1;
+              }
+              return 0;
+
+            case 'lang_first':
+            case 'language_first':
+              // Quality first, then language, then size
+              if (aHasPreferredLang !== bHasPreferredLang) {
+                return aHasPreferredLang ? -1 : 1;
+              }
+              if (aScore !== bScore) {
+                return bScore - aScore;
+              }
+              return compareSize();
+
+            case 'quality_first':
+            default:
+              // Quality first (default), then language, then size
+              if (aScore !== bScore) {
+                return bScore - aScore;
+              }
+              if (aHasPreferredLang !== bHasPreferredLang) {
+                return aHasPreferredLang ? -1 : 1;
+              }
+              return compareSize();
+          }
+        });
+      }
+
+      // After all streams have been collected, filter and limit them based on user settings
+      if (streams.length > 0) {
+        const originalCount = streams.length;
+        logger.info(`Starting filters with ${originalCount} streams`);
+
+        // Filter streams by quality
+        const defaultQualitySet = ['4k', '1080p', '720p', '480p'];
+        const isCustomQualityFilter = !(
+          qualityFilters.length === defaultQualitySet.length &&
+          qualityFilters.every(q => defaultQualitySet.includes(q))
+        );
+
+        if (isCustomQualityFilter) {
+          const qualityMap: Record<string, string[]> = {
+            '4k': ['4K', 'UHD', '2160p'],
+            '1080p': ['1080p'],
+            '720p': ['720p'],
+            '480p': ['480p', 'SD'],
+          };
+
+          // Create a list of allowed quality strings
+          const allowedQualityTerms: string[] = [];
+          qualityFilters.forEach(q => {
+            if (qualityMap[q]) {
+              allowedQualityTerms.push(...qualityMap[q]);
+            }
+          });
+
+          logger.info(`Filtering for qualities: ${qualityFilters.join(', ')}`);
+          logger.info(`Accepted quality terms: ${allowedQualityTerms.join(', ')}`);
+
+          if (allowedQualityTerms.length > 0) {
+            const filteredStreams = streams.filter(stream => {
+              const quality = stream.name?.split('\n')[1] || '';
+              const matchesQuality = allowedQualityTerms.some(term => quality.includes(term));
+              return matchesQuality;
+            });
+
+            // Only update if we found at least one match
+            if (filteredStreams.length > 0) {
+              streams = filteredStreams;
+              logger.info(`After quality filtering: ${streams.length} streams remain`);
+            } else {
+              logger.warn(`Quality filtering would remove all streams - keeping original results`);
+            }
+          }
         }
 
-        // If same quality, prioritize by file size (larger typically better quality)
-        const aSize = aDesc.length > 2 ? aDesc[2] : '';
-        const bSize = bDesc.length > 2 ? bDesc[2] : '';
+        // Filter streams by file size (only if maxFileSizeGB > 0)
+        if (maxFileSizeGB > 0) {
+          const filteredStreams = streams.filter(stream => {
+            const description = stream.description || '';
+            const sizeLine = description.split('\n').find(line => line.includes('📦'));
 
-        // Simple size comparison for GB files
-        if (aSize.includes('GB') && bSize.includes('GB')) {
-          const aGB = parseFloat(aSize.match(/[\d.]+/)?.[0] || '0');
-          const bGB = parseFloat(bSize.match(/[\d.]+/)?.[0] || '0');
-          if (aGB > bGB) return -1;
-          if (aGB < bGB) return 1;
+            if (!sizeLine) return true; // Keep if we can't determine size
+
+            if (sizeLine.includes('GB')) {
+              const sizeGB = parseFloat(sizeLine.match(/[\d.]+/)?.[0] || '0');
+              return sizeGB <= maxFileSizeGB;
+            }
+
+            if (sizeLine.includes('MB')) {
+              const sizeMB = parseFloat(sizeLine.match(/[\d.]+/)?.[0] || '0');
+              return sizeMB / 1024 <= maxFileSizeGB;
+            }
+
+            return true; // Keep if we can't parse the size
+          });
+
+          // Only update if we found at least one match
+          if (filteredStreams.length > 0) {
+            streams = filteredStreams;
+            logger.info(`After max file size filtering: ${streams.length} streams remain`);
+          } else {
+            logger.warn(`File size filtering would remove all streams - keeping original results`);
+          }
         }
 
-        // Compare MB to GB (GB is always larger)
-        if (aSize.includes('GB') && bSize.includes('MB')) return -1;
-        if (aSize.includes('MB') && bSize.includes('GB')) return 1;
+        // Group streams by quality for limiting per quality (only if maxResultsPerQualityValue > 0)
+        if (maxResultsPerQualityValue > 0) {
+          const streamsByQuality: Record<string, Stream[]> = {};
 
-        // Compare MB files
-        if (aSize.includes('MB') && bSize.includes('MB')) {
-          const aMB = parseFloat(aSize.match(/[\d.]+/)?.[0] || '0');
-          const bMB = parseFloat(bSize.match(/[\d.]+/)?.[0] || '0');
-          if (aMB > bMB) return -1;
-          if (aMB < bMB) return 1;
+          // Determine quality category for each stream
+          streams.forEach(stream => {
+            const quality = stream.name?.split('\n')[1] || '';
+            let qualityCategory = 'other';
+
+            if (quality.includes('4K') || quality.includes('UHD') || quality.includes('2160p')) {
+              qualityCategory = '4k';
+            } else if (quality.includes('1080p')) {
+              qualityCategory = '1080p';
+            } else if (quality.includes('720p')) {
+              qualityCategory = '720p';
+            } else if (quality.includes('480p') || quality.includes('SD')) {
+              qualityCategory = '480p';
+            }
+
+            if (!streamsByQuality[qualityCategory]) {
+              streamsByQuality[qualityCategory] = [];
+            }
+            streamsByQuality[qualityCategory].push(stream);
+          });
+
+          // Log the distribution of streams by quality
+          Object.entries(streamsByQuality).forEach(([quality, streams]) => {
+            logger.info(`Quality ${quality}: ${streams.length} streams`);
+          });
+
+          // Apply limits per quality category and rebuild streams array
+          const limitedStreams: Stream[] = [];
+          Object.keys(streamsByQuality).forEach(quality => {
+            const qualityStreams = streamsByQuality[quality];
+            const limitedQualityStreams = qualityStreams.slice(0, maxResultsPerQualityValue);
+            limitedStreams.push(...limitedQualityStreams);
+
+            if (limitedQualityStreams.length < qualityStreams.length) {
+              logger.info(
+                `Quality ${quality}: Limited from ${qualityStreams.length} to ${limitedQualityStreams.length} streams`
+              );
+            }
+          });
+
+          if (limitedStreams.length > 0) {
+            streams = limitedStreams;
+            logger.info(`After applying max results per quality: ${streams.length} streams remain`);
+          } else {
+            logger.warn(`Per-quality limiting would remove all streams - keeping original results`);
+          }
         }
 
-        return 0;
-      });
+        logger.info(`Filtering complete: ${originalCount} streams → ${streams.length} streams`);
+      }
 
       // Limit to top 25 streams to prevent overwhelming the player
       // No need to slice here since we're already limiting results at the API level
@@ -724,6 +955,8 @@ function mapStream({
   fileExtension,
   videoSize,
   url,
+  file,
+  preferredLang,
 }: {
   title: string;
   url: string;
@@ -734,22 +967,41 @@ function mapStream({
   duration: string | undefined;
   size: string | undefined;
   fullResolution: string | undefined;
+  file: any;
+  preferredLang: string;
 }): Stream {
   const quality = getQuality(title, fullResolution);
 
-  return {
+  // Log language information for debugging
+  if (file.alangs) {
+    logger.info(`Stream "${title}" has languages: ${JSON.stringify(file.alangs)}`);
+  } else {
+    logger.info(`Stream "${title}" has no language information`);
+  }
+
+  // Show language information in the description if available
+  const languageInfo = file.alangs?.length
+    ? `🌐 ${file.alangs.join(', ')}${preferredLang && file.alangs.includes(preferredLang) ? ' ⭐' : ''}`
+    : '🌐 Unknown';
+
+  const stream: Stream & { _temp?: any } = {
     name: `Easynews++${quality ? `\n${quality}` : ''}`,
     description: [
       `${title}${fileExtension}`,
       `🕛 ${duration ?? 'unknown duration'}`,
       `📦 ${size ?? 'unknown size'}`,
+      languageInfo,
     ].join('\n'),
     url: url,
     behaviorHints: {
       notWebReady: true,
       filename: `${title}${fileExtension}`,
     },
+    // Add temporary property with file data for sorting
+    _temp: { file },
   };
+
+  return stream;
 }
 
 function getCacheOptions(itemsLength: number): Partial<Cache> {
@@ -759,4 +1011,3 @@ function getCacheOptions(itemsLength: number): Partial<Cache> {
 }
 
 export const addonInterface = builder.getInterface();
-export const landingHTML = landingTemplate(addonInterface.manifest);

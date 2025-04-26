@@ -1,4 +1,11 @@
-import { Stream as StremioStream } from 'stremio-addon-sdk';
+declare module 'stremio-addon-sdk' {
+  interface Manifest {
+    stremioAddonsConfig?: {
+      issuer: string;
+      signature: string;
+    };
+  }
+}
 
 export type Stream = {
   name: string;

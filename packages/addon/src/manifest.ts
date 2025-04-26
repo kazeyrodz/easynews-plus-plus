@@ -1,22 +1,76 @@
-import { Manifest, ManifestCatalog } from 'stremio-addon-sdk';
-import {
-  DirectionKey,
-  humanReadableDirections,
-  humanReadableSortOptions,
-  toHumanReadable,
-} from './sort-option';
-const { version, description } = require('../package.json');
+import { Manifest, ManifestCatalog, ContentType } from 'stremio-addon-sdk';
+import { translations, DEFAULT_LANGUAGE } from './i18n';
 
+import { version, description } from '../../../package.json';
+
+// Prepare catalog structure
 export const catalog: ManifestCatalog = {
   id: 'easynews-plus-plus',
   name: 'Easynews++',
-  type: 'tv',
+  type: 'tv' as ContentType,
   extra: [{ name: 'search', isRequired: true }],
 };
 
-// TODO: fix in '@types/stremio-addon-sdk'
-const sortOptions = humanReadableSortOptions as any;
-const directionOptions = humanReadableDirections as any;
+// Get the English translations for the initial setup
+const englishTranslations = translations[DEFAULT_LANGUAGE];
+
+// Language options for the preferred language selector
+const languageOptions = {
+  '': englishTranslations.languages.noPreference,
+  eng: englishTranslations.languages.english,
+  ger: englishTranslations.languages.german,
+  spa: englishTranslations.languages.spanish,
+  fre: englishTranslations.languages.french,
+  ita: englishTranslations.languages.italian,
+  jpn: englishTranslations.languages.japanese,
+  por: englishTranslations.languages.portuguese,
+  rus: englishTranslations.languages.russian,
+  kor: englishTranslations.languages.korean,
+  chi: englishTranslations.languages.chinese,
+  dut: englishTranslations.languages.dutch,
+  rum: englishTranslations.languages.romanian,
+  bul: englishTranslations.languages.bulgarian,
+} as any;
+
+// Sorting preference options
+const sortingOptions = {
+  quality_first: englishTranslations.sortingOptions.qualityFirst,
+  language_first: englishTranslations.sortingOptions.languageFirst,
+  size_first: englishTranslations.sortingOptions.sizeFirst,
+  date_first: englishTranslations.sortingOptions.dateFirst,
+  relevance_first: englishTranslations.sortingOptions.relevanceFirst,
+} as any;
+
+// Create UI language options
+const uiLanguageOptions = {
+  eng: 'English',
+  ger: 'Deutsch (German)',
+  spa: 'Español (Spanish)',
+  fre: 'Français (French)',
+  ita: 'Italiano (Italian)',
+  jpn: '日本語 (Japanese)',
+  por: 'Português (Portuguese)',
+  rus: 'Русский (Russian)',
+  kor: '한국어 (Korean)',
+  chi: '中文 (Chinese)',
+  dut: 'Nederlands (Dutch)',
+  rum: 'Română (Romanian)',
+  bul: 'Български (Bulgarian)',
+} as Record<string, string>;
+
+// Quality options for streams
+const qualityOptions = {
+  '4k,1080p,720p,480p': englishTranslations.qualityOptions.allQualities,
+  '4k': '4K/UHD/2160p',
+  '1080p': '1080p/FHD',
+  '720p': '720p/HD',
+  '480p': '480p/SD',
+  '4k,1080p': '4K + 1080p',
+  '1080p,720p': '1080p + 720p',
+  '720p,480p': '720p + 480p',
+  '4k,1080p,720p': '4K + 1080p + 720p',
+  '1080p,720p,480p': '1080p + 720p + 480p',
+} as Record<string, string>;
 
 export const manifest: Manifest = {
   id: 'community.easynews-plus-plus',
@@ -33,57 +87,63 @@ export const manifest: Manifest = {
   background: 'https://i.imgur.com/QPPXf5T.jpeg',
   logo: 'https://pbs.twimg.com/profile_images/479627852757733376/8v9zH7Yo_400x400.jpeg',
   behaviorHints: { configurable: true, configurationRequired: true },
+  stremioAddonsConfig: {
+    issuer: 'https://stremio-addons.net',
+    signature:
+      'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..51PLy1tUzMKnIWRNR4A7LA.t7KcM925cLQphqv-9WHr59YPtO-snyEl5wBeYvWYs9JlW3tFZ8P_WeGwzVBhVVELh5b3976B8CbnwXVFamteW3suTTf9FnBUMY29NUvn20qQX70EshoCaFh3dy9uowcB.bYVYPWa02j8x1RNx7UG59A',
+  },
   config: [
-    { title: 'username', key: 'username', type: 'text' },
-    { title: 'password', key: 'password', type: 'password' },
     {
-      title:
-        "Strict Title Matching (to filter out results that don't exactly match the movie or series title)",
+      title: englishTranslations.form.uiLanguage,
+      key: 'uiLanguage',
+      type: 'select',
+      options: uiLanguageOptions as any,
+      default: 'eng',
+    },
+    { title: englishTranslations.form.username, key: 'username', type: 'text' },
+    {
+      title: englishTranslations.form.password,
+      key: 'password',
+      type: 'password',
+    },
+    {
+      title: englishTranslations.form.strictTitleMatching,
       key: 'strictTitleMatching',
       type: 'checkbox',
       default: 'false',
     },
     {
-      title: 'Sort 1st',
-      key: 'sort1',
+      title: englishTranslations.form.preferredLanguage,
+      key: 'preferredLanguage',
       type: 'select',
-      options: sortOptions,
-      default: toHumanReadable('Size'),
+      options: languageOptions as any,
+      default: '',
     },
     {
-      title: 'Sort 1st direction',
-      key: 'sort1Direction',
+      title: englishTranslations.form.sortingMethod,
+      key: 'sortingPreference',
       type: 'select',
-      options: directionOptions,
-      default: 'Descending' satisfies DirectionKey,
+      options: sortingOptions as any,
+      default: 'quality_first',
     },
     {
-      title: 'Sort 2nd',
-      key: 'sort2',
+      title: englishTranslations.form.showQualities,
+      key: 'showQualities',
       type: 'select',
-      options: sortOptions,
-      default: toHumanReadable('Relevance'),
+      options: qualityOptions as any,
+      default: '4k,1080p,720p,480p',
     },
     {
-      title: 'Sort 2nd direction',
-      key: 'sort2Direction',
-      type: 'select',
-      options: directionOptions,
-      default: 'Descending' satisfies DirectionKey,
+      title: englishTranslations.form.maxResultsPerQuality,
+      key: 'maxResultsPerQuality',
+      type: 'number',
+      default: '0',
     },
     {
-      title: 'Sort 3rd',
-      key: 'sort3',
-      type: 'select',
-      options: sortOptions,
-      default: toHumanReadable('DateTime'),
-    },
-    {
-      title: 'Sort 3rd direction',
-      key: 'sort3Direction',
-      type: 'select',
-      options: directionOptions,
-      default: 'Descending' satisfies DirectionKey,
+      title: englishTranslations.form.maxFileSize,
+      key: 'maxFileSize',
+      type: 'number',
+      default: '0',
     },
   ],
 };
